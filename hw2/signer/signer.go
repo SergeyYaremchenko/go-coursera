@@ -3,17 +3,21 @@ package main
 import (
 	"fmt"
 	"os"
-	"runtime"
 	"sort"
 	"strconv"
 	"sync"
 )
 
+type dataDto struct {
+	Dto         string
+	InitialData string
+}
+
 func SingleHash(in, out chan interface{}) {
 	fmt.Printf("%v - %v SingleHash start\n", in, out)
-	outmd5 := make(chan string, 100)
-	outcrc32 := make(chan string, 100)
 
+	outmd5 := make(chan string)
+	outcrc32 := make(chan string)
 	defer close(outcrc32)
 	defer close(outmd5)
 
@@ -43,9 +47,10 @@ func SingleHash(in, out chan interface{}) {
 
 		fmt.Printf("%v - %v SingleHash[%s] result %s\n", in, out, inDataStr, result)
 
-		out <- result
-
-		runtime.Gosched()
+		out <- dataDto{
+			Dto:         result,
+			InitialData: inDataStr,
+		}
 	}
 
 	fmt.Printf("%v - %v SingleHash finish\n", in, out)
@@ -57,12 +62,14 @@ func signCrc32Chan(data string, out chan string) {
 	out <- crc32
 }
 
-func signCrc32Ptr(data string, out *string, wg *sync.WaitGroup) {
+func signCrc32Ptr(data string, initial string, inCh chan interface{}, outCh chan interface{}, out *string, wg *sync.WaitGroup) {
+	fmt.Printf("%v - %v signCrc32Ptr[%s] got data: %s\n", inCh, outCh, initial, data)
+
 	crc32 := DataSignerCrc32(data)
 
 	*out = crc32
 
-	fmt.Printf("%s MultiHash: crc32(th+step1)) %s\n", data, crc32)
+	fmt.Printf("%v - %v signCrc32Ptr[%s] result: %s\n", inCh, outCh, initial, crc32)
 
 	wg.Done()
 }
@@ -70,25 +77,35 @@ func signCrc32Ptr(data string, out *string, wg *sync.WaitGroup) {
 func MultiHash(in, out chan interface{}) {
 	fmt.Printf("%v - %v MultiHash start\n", in, out)
 
-	for inData := range in {
-		data := inData.(string)
-		go mhRoutine(data, out)
-	}
-
-	fmt.Printf("%v - %v MultiHash finish\n", in, out)
-}
-
-func mhRoutine(data string, out chan interface{}) {
-	r := [6]string{"0", "1", "2", "3", "4", "5"}
-	outData := make([]string, 6)
 	wg := sync.WaitGroup{}
-	for i, v := range r {
-		go signCrc32Ptr(v+data, &outData[i], &wg)
+
+	for inData := range in {
+		data := inData.(dataDto)
+		go mhRoutine(data, in, out, &wg)
 		wg.Add(1)
 	}
 
 	wg.Wait()
-	fmt.Printf("%s MultiHash result:%s\n", data, outData)
+	fmt.Printf("%v - %v MultiHash finish\n", in, out)
+}
+
+func mhRoutine(data dataDto, in, out chan interface{}, wg *sync.WaitGroup) {
+	fmt.Printf("%v - %v mhRoutine[%s] got data: %v\n", in, out, data.InitialData, data.Dto)
+
+	r := [6]string{"0", "1", "2", "3", "4", "5"}
+
+	outData := make([]string, 6)
+	wgr := sync.WaitGroup{}
+
+	for i, v := range r {
+		wgr.Add(1)
+
+		go signCrc32Ptr(v+data.Dto, data.InitialData, in, out, &outData[i], &wgr)
+	}
+
+	wgr.Wait()
+
+	fmt.Printf("%v - %v mhRoutine[%s] result: %v\n", in, out, data.InitialData, outData)
 	result := ""
 
 	for _, v := range outData {
@@ -96,6 +113,8 @@ func mhRoutine(data string, out chan interface{}) {
 	}
 
 	out <- result
+
+	wg.Done()
 }
 
 func CombineResults(in, out chan interface{}) {
@@ -122,8 +141,8 @@ func CombineResults(in, out chan interface{}) {
 }
 
 func wrapJob(j job, in, out chan interface{}, wg *sync.WaitGroup) {
-	defer close(out)
 	defer wg.Done()
+	defer close(out)
 	fmt.Printf("%v - %v job start\n", in, out)
 	j(in, out)
 	fmt.Printf("%v - %v job finish, closing %v\n", in, out, out)
@@ -132,20 +151,20 @@ func wrapJob(j job, in, out chan interface{}, wg *sync.WaitGroup) {
 func ExecutePipeline(jobs ...job) {
 	wg := sync.WaitGroup{}
 	in := make(chan interface{})
-	out := make(chan interface{}, 100)
+	out := make(chan interface{})
 
 	for _, j := range jobs {
 		wg.Add(1)
 		go wrapJob(j, in, out, &wg)
 
 		in = out
-		out = make(chan interface{}, 100)
+		out = make(chan interface{})
 	}
 	wg.Wait()
 }
 
 func main() {
-	runtime.GOMAXPROCS(8)
+	//runtime.GOMAXPROCS(8)
 	if len(os.Args) < 2 || os.Args[1] == "" {
 		panic("Empty input")
 	}

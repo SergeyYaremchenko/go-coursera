@@ -14,46 +14,66 @@ type dataDto struct {
 }
 
 func SingleHash(in, out chan interface{}) {
-	fmt.Printf("%v - %v SingleHash start\n", in, out)
-
-	outmd5 := make(chan string)
-	outcrc32 := make(chan string)
-	defer close(outcrc32)
-	defer close(outmd5)
+	fmt.Printf("%v - %v SinleHash start\n", in, out)
+	outmd5 := make([]dataDto, 0)
 
 	for inData := range in {
 
 		inDataStr := strconv.Itoa(inData.(int))
-
 		fmt.Printf("%v - %v SingleHash[%s] data %s\n", in, out, inDataStr, inDataStr)
 
 		md5 := DataSignerMd5(inDataStr)
 
 		fmt.Printf("%v - %v SingleHash[%s] md5(data) %s\n", in, out, inDataStr, md5)
 
-		go signCrc32Chan(md5, outmd5)
-
-		go signCrc32Chan(inDataStr, outcrc32)
-
-		crc32md5 := <-outmd5
-
-		fmt.Printf("%v - %v SingleHash[%s] crc32(md5(data)) %s\n", in, out, inDataStr, crc32md5)
-
-		crc32 := <-outcrc32
-
-		fmt.Printf("%v - %v SingleHash[%s] crc32(data) %s\n", in, out, inDataStr, crc32)
-
-		result := crc32 + "~" + crc32md5
-
-		fmt.Printf("%v - %v SingleHash[%s] result %s\n", in, out, inDataStr, result)
-
-		out <- dataDto{
-			Dto:         result,
+		outmd5 = append(outmd5, dataDto{
+			Dto:         md5,
 			InitialData: inDataStr,
-		}
+		})
 	}
 
+	wg := sync.WaitGroup{}
+
+	for _, md5 := range outmd5 {
+		wg.Add(1)
+		go processMd5(md5, in, out, &wg)
+	}
+	wg.Wait()
 	fmt.Printf("%v - %v SingleHash finish\n", in, out)
+}
+
+func processMd5(md5 dataDto, in, out chan interface{}, wg *sync.WaitGroup) {
+	outcrcmd5 := make(chan string)
+	outcrc32 := make(chan string)
+	defer close(outcrc32)
+	defer close(outcrcmd5)
+
+	go signCrc32Chan(md5.Dto, outcrcmd5)
+
+	go signCrc32Chan(md5.InitialData, outcrc32)
+
+	crc32md5 := <-outcrcmd5
+
+	fmt.Printf("%v - %v SingleHash[%s] crc32(md5(data)) %s\n", in, out, md5.InitialData, crc32md5)
+
+	crc32 := <-outcrc32
+
+	fmt.Printf("%v - %v SingleHash[%s] crc32(data) %s\n", in, out, md5.InitialData, crc32)
+
+	result := crc32 + "~" + crc32md5
+
+	fmt.Printf("%v - %v SingleHash[%s] result %s\n", in, out, md5.InitialData, result)
+
+	out <- dataDto{
+		Dto:         result,
+		InitialData: md5.InitialData,
+	}
+
+	wg.Done()
+}
+
+func calcmd5(data string, outmd5 chan dataDto, in, out chan interface{}) {
+
 }
 
 func signCrc32Chan(data string, out chan string) {
@@ -81,8 +101,8 @@ func MultiHash(in, out chan interface{}) {
 
 	for inData := range in {
 		data := inData.(dataDto)
-		go mhRoutine(data, in, out, &wg)
 		wg.Add(1)
+		go mhRoutine(data, in, out, &wg)
 	}
 
 	wg.Wait()
@@ -99,7 +119,6 @@ func mhRoutine(data dataDto, in, out chan interface{}, wg *sync.WaitGroup) {
 
 	for i, v := range r {
 		wgr.Add(1)
-
 		go signCrc32Ptr(v+data.Dto, data.InitialData, in, out, &outData[i], &wgr)
 	}
 

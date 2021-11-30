@@ -72,10 +72,6 @@ func processMd5(md5 dataDto, in, out chan interface{}, wg *sync.WaitGroup) {
 	wg.Done()
 }
 
-func calcmd5(data string, outmd5 chan dataDto, in, out chan interface{}) {
-
-}
-
 func signCrc32Chan(data string, out chan string) {
 	crc32 := DataSignerCrc32(data)
 

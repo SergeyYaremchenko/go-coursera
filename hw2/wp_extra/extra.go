@@ -16,7 +16,8 @@ loop:
 		case data := <-in:
 			//fmt.Printf("Processed: %s\n", data)
 			out <- data
-		case _ = <-cancelCh:
+		case <-cancelCh:
+			fmt.Println("Le kill")
 			break loop
 		}
 	}
@@ -53,7 +54,7 @@ func generate(in chan<- string, n int) {
 
 func print(out chan string, n int) {
 	//defer close(out)
-	for _ = range out {
+	for range out {
 		//fmt.Printf("Received[%v]: %s\n", n, data)
 		time.Sleep(time.Second)
 	}

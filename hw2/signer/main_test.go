@@ -57,7 +57,7 @@ func TestPipeline(t *testing.T) {
 		job(func(in, out chan interface{}) {
 			//fmt.Printf("job_2 \nin: %v\nout:%v\n", in, out)
 			fmt.Println("job_2 start")
-			for _ = range in {
+			for range in {
 				fmt.Println("job_2 add")
 				atomic.AddUint32(&recieved, 1)
 			}
@@ -86,7 +86,7 @@ func TestSigner(t *testing.T) {
 	// variables.
 
 	var (
-		DataSignerSalt         string = "" // на сервере будет другое значение
+		DataSignerSalt         = "" // на сервере будет другое значение
 		OverheatLockCounter    uint32
 		OverheatUnlockCounter  uint32
 		DataSignerMd5Counter   uint32

@@ -14,8 +14,8 @@ type dataDto struct {
 }
 
 func SingleHash(in, out chan interface{}) {
-	fmt.Printf("%v - %v SinleHash start\n", in, out)
-	outmd5 := make([]dataDto, 0)
+	fmt.Printf("%v - %v SingleHash start\n", in, out)
+	outMd5 := make([]dataDto, 0)
 
 	for inData := range in {
 
@@ -26,7 +26,7 @@ func SingleHash(in, out chan interface{}) {
 
 		fmt.Printf("%v - %v SingleHash[%s] md5(data) %s\n", in, out, inDataStr, md5)
 
-		outmd5 = append(outmd5, dataDto{
+		outMd5 = append(outMd5, dataDto{
 			Dto:         md5,
 			InitialData: inDataStr,
 		})
@@ -34,7 +34,7 @@ func SingleHash(in, out chan interface{}) {
 
 	wg := sync.WaitGroup{}
 
-	for _, md5 := range outmd5 {
+	for _, md5 := range outMd5 {
 		wg.Add(1)
 		go processMd5(md5, in, out, &wg)
 	}
@@ -43,20 +43,20 @@ func SingleHash(in, out chan interface{}) {
 }
 
 func processMd5(md5 dataDto, in, out chan interface{}, wg *sync.WaitGroup) {
-	outcrcmd5 := make(chan string)
-	outcrc32 := make(chan string)
-	defer close(outcrc32)
-	defer close(outcrcmd5)
+	outCrcMd5 := make(chan string)
+	outCrc32 := make(chan string)
+	defer close(outCrc32)
+	defer close(outCrcMd5)
 
-	go signCrc32Chan(md5.Dto, outcrcmd5)
+	go signCrc32Chan(md5.Dto, outCrcMd5)
 
-	go signCrc32Chan(md5.InitialData, outcrc32)
+	go signCrc32Chan(md5.InitialData, outCrc32)
 
-	crc32md5 := <-outcrcmd5
+	crc32md5 := <-outCrcMd5
 
 	fmt.Printf("%v - %v SingleHash[%s] crc32(md5(data)) %s\n", in, out, md5.InitialData, crc32md5)
 
-	crc32 := <-outcrc32
+	crc32 := <-outCrc32
 
 	fmt.Printf("%v - %v SingleHash[%s] crc32(data) %s\n", in, out, md5.InitialData, crc32)
 
@@ -179,7 +179,6 @@ func ExecutePipeline(jobs ...job) {
 }
 
 func main() {
-	//runtime.GOMAXPROCS(8)
 	if len(os.Args) < 2 || os.Args[1] == "" {
 		panic("Empty input")
 	}

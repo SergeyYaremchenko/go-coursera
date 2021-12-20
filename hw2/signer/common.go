@@ -11,10 +11,6 @@ import (
 
 type job func(in, out chan interface{})
 
-const (
-	MaxInputDataLen = 100
-)
-
 var (
 	dataSignerOverheat uint32 = 0
 	DataSignerSalt            = ""

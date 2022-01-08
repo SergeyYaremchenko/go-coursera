@@ -7,15 +7,28 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 )
 
-type searchParams struct {
-	Limit      int
-	Offset     int
-	Query      string
-	OrderField string
-	OrderBy    string
+type xmlUser struct {
+	Id            int
+	Guid          string
+	IsActive      bool
+	Balance       string
+	Picture       string
+	Age           int
+	EyeColor      string
+	FirstName     string
+	LastName      string
+	Gender        string
+	Company       string
+	Email         string
+	Phone         string
+	Address       string
+	About         string
+	Registered    string
+	FavoriteFruit string
 }
 
 func SearchServer(w http.ResponseWriter, r *http.Request) {
@@ -51,11 +64,57 @@ func SearchServer(w http.ResponseWriter, r *http.Request) {
 
 func findUsers(rq SearchRequest) ([]User, error) {
 	u, err := readUsers("dataset.xml")
+	result := make([]User, rq.Limit)
 
 	if err != nil {
 		return nil, err
 	}
 
+	u = sortUsers(u, rq.OrderField, rq.OrderBy)
+
+	if rq.Offset > len(u)+1 || rq.Limit > len(u) {
+		return u, nil
+	}
+
+	for i := rq.Offset + 1; i < rq.Offset+1+rq.Limit; i++ {
+		if rq.Query != "" && (u[i].Name == rq.Query || u[i].About == rq.Query) {
+			result = append(result, u[i])
+		}
+	}
+
+	return result, nil
+}
+
+func sortUsers(u []User, orderFiled string, orderBy int) []User {
+	if orderBy == OrderByAsIs {
+		return u
+	}
+	sort.Slice(u, func(i, j int) bool {
+		switch orderFiled {
+		case "Id":
+			if orderBy == OrderByAsc {
+				return u[i].Id > u[j].Id
+			} else {
+				return u[i].Id < u[j].Id
+			}
+		case "Age":
+			if orderBy == OrderByAsc {
+				return u[i].Age > u[j].Age
+			} else {
+				return u[i].Age < u[j].Age
+			}
+		case "Name":
+			fallthrough
+		default:
+			if orderBy == OrderByAsc {
+				return u[i].Name > u[j].Name
+			} else {
+				return u[i].Name < u[j].Name
+			}
+		}
+	})
+
+	return u
 }
 
 func readUsers(path string) ([]User, error) {
@@ -72,14 +131,26 @@ func readUsers(path string) ([]User, error) {
 		return nil, err
 	}
 
-	var users []User
-	err = xml.Unmarshal(byteValue, &users)
+	var xmlUsers []xmlUser
+	err = xml.Unmarshal(byteValue, &xmlUsers)
 
 	if err != nil {
 		return nil, err
 	}
 
-	return users, nil
+	result := make([]User, len(xmlUsers))
+
+	for i := 0; i < len(xmlUsers); i++ {
+		result = append(result, User{
+			Id:     xmlUsers[i].Id,
+			Name:   xmlUsers[i].FirstName + " " + xmlUsers[i].LastName,
+			Age:    xmlUsers[i].Age,
+			About:  xmlUsers[i].About,
+			Gender: xmlUsers[i].Gender,
+		})
+	}
+
+	return result, nil
 }
 
 func parseParams(limit, offset, query, orderField, orderBy string) SearchRequest {

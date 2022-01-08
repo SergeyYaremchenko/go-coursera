@@ -23,7 +23,7 @@ func FastSearch(out io.Writer) {
 	scanner := bufio.NewScanner(file)
 
 	users := make([]user.User, 0)
-	uniqBrowsers := make(map[string]struct{})
+	uniqBrowsers := make(map[string]bool)
 
 	for scanner.Scan() {
 		user := user.User{}
@@ -53,8 +53,8 @@ func FastSearch(out io.Writer) {
 			}
 
 			if count {
-				if _, seen := uniqBrowsers[browser]; !seen {
-					uniqBrowsers[browser] = struct{}{}
+				if seen := uniqBrowsers[browser]; !seen {
+					uniqBrowsers[browser] = true
 				}
 			}
 		}

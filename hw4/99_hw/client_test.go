@@ -6,29 +6,327 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"sort"
 	"strconv"
+	"testing"
+	"time"
 )
 
-type xmlUser struct {
-	Id            int
-	Guid          string
-	IsActive      bool
-	Balance       string
-	Picture       string
-	Age           int
-	EyeColor      string
-	FirstName     string
-	LastName      string
-	Gender        string
-	Company       string
-	Email         string
-	Phone         string
-	Address       string
-	About         string
-	Registered    string
-	FavoriteFruit string
+type XmlRoot struct {
+	XmlName xml.Name  `xml:"root"`
+	Users   []XmlUser `xml:"row"`
+}
+
+type XmlUser struct {
+	XmlName       xml.Name `xml:"row"`
+	Id            int      `xml:"id"`
+	Guid          string   `xml:"guid"`
+	IsActive      bool     `xml:"isActive"`
+	Balance       string   `xml:"balance"`
+	Picture       string   `xml:"picture"`
+	Age           int      `xml:"age"`
+	EyeColor      string   `xml:"eyeColor"`
+	FirstName     string   `xml:"first_name"`
+	LastName      string   `xml:"last_name"`
+	Gender        string   `xml:"gender"`
+	Company       string   `xml:"company"`
+	Email         string   `xml:"email"`
+	Phone         string   `xml:"phone"`
+	Address       string   `xml:"address"`
+	About         string   `xml:"about"`
+	Registered    string   `xml:"registered"`
+	FavoriteFruit string   `xml:"favoriteFruit"`
+}
+
+type UserApi struct {
+	UserApiURL string
+}
+
+type UserTestCase struct {
+	Request     SearchRequest
+	Result      SearchResponse
+	Token       string
+	Error       error
+	IsError     bool
+	CheckResult func(tk UserTestCase) bool
+}
+
+func TestFindUsers(t *testing.T) {
+	cases := []UserTestCase{
+		{
+			Request: SearchRequest{
+				Query:  "",
+				Limit:  10,
+				Offset: 0,
+			},
+			Token:   "token",
+			IsError: false,
+			CheckResult: func(tk UserTestCase) bool {
+				return len(tk.Result.Users) == tk.Request.Limit
+			},
+		},
+		{
+			Request: SearchRequest{
+				Query:  "Boyd Wolf",
+				Limit:  10,
+				Offset: 0,
+			},
+			IsError: false,
+			Token:   "token",
+			CheckResult: func(tk UserTestCase) bool {
+				return len(tk.Result.Users) == 1 && tk.Result.Users[0].Name == "Boyd Wolf"
+			},
+		},
+		{
+			Request: SearchRequest{
+				Query:  "",
+				Limit:  -1,
+				Offset: 0,
+			},
+			Token:   "token",
+			IsError: true,
+			CheckResult: func(tk UserTestCase) bool {
+				return tk.Error.Error() == "limit must be > 0"
+			},
+		},
+		{
+			Request: SearchRequest{
+				Query:  "",
+				Limit:  26,
+				Offset: 0,
+			},
+			Token:   "token",
+			IsError: false,
+			CheckResult: func(tk UserTestCase) bool {
+				return len(tk.Result.Users) == 25
+			},
+		},
+		{
+			Request: SearchRequest{
+				Query:  "",
+				Limit:  0,
+				Offset: -1,
+			},
+			Token:   "token",
+			IsError: true,
+			CheckResult: func(tk UserTestCase) bool {
+				return tk.Error.Error() == "offset must be > 0"
+			},
+		},
+		{
+			Request: SearchRequest{
+				Query:  "",
+				Limit:  0,
+				Offset: 0,
+			},
+			IsError: true,
+			CheckResult: func(tk UserTestCase) bool {
+				return tk.Error.Error() == "Bad AccessToken"
+			},
+		},
+		{
+			Request: SearchRequest{
+				Query:      "",
+				Limit:      0,
+				Offset:     0,
+				OrderBy:    0,
+				OrderField: "BAD",
+			},
+			IsError: true,
+			Token:   "token",
+			CheckResult: func(tk UserTestCase) bool {
+				return tk.Error.Error() == "OrderFeld BAD invalid"
+			},
+		},
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(SearchServer))
+
+	for caseNum, item := range cases {
+		u := &SearchClient{
+			URL:         ts.URL,
+			AccessToken: item.Token,
+		}
+		res, err := u.FindUsers(item.Request)
+
+		item.Error = err
+		if res != nil {
+			item.Result = *res
+		}
+
+		if err != nil && !item.IsError {
+			t.Errorf("Unexpected error %s", err)
+		}
+
+		if err == nil && item.IsError {
+			t.Errorf("Expected error, got nil: %+v", item)
+		}
+
+		if !item.CheckResult(item) {
+			t.Errorf("[%d] wrong result %+v", caseNum, item)
+		}
+	}
+
+	ts.Close()
+
+	testTimeout(t)
+	testInternalError(t)
+	testError(t)
+	testBadRequest(t)
+	testBrokenJsonWithBadRequest(t)
+	testBrokenJsonWithOkRequest(t)
+}
+
+func testBrokenJsonWithBadRequest(t *testing.T) {
+	tsBadJsonRequest := httptest.NewServer(http.HandlerFunc(ServeBrokenJson))
+	u := &SearchClient{
+		URL:         tsBadJsonRequest.URL,
+		AccessToken: "TOKEN",
+	}
+	_, err := u.FindUsers(SearchRequest{
+		Limit:      10,
+		Offset:     0,
+		Query:      "",
+		OrderField: "",
+		OrderBy:    0,
+	})
+
+	if err == nil {
+		t.Errorf("Expected bad json request, got nil")
+	}
+}
+
+func testBrokenJsonWithOkRequest(t *testing.T) {
+	tsBadJsonRequest := httptest.NewServer(http.HandlerFunc(ServeBrokenJsonOkResult))
+	u := &SearchClient{
+		URL:         tsBadJsonRequest.URL,
+		AccessToken: "TOKEN",
+	}
+	_, err := u.FindUsers(SearchRequest{
+		Limit:      10,
+		Offset:     0,
+		Query:      "",
+		OrderField: "",
+		OrderBy:    0,
+	})
+
+	if err == nil {
+		t.Errorf("Expected bad json request, got nil")
+	}
+}
+
+func testBadRequest(t *testing.T) {
+	tsBadRequest := httptest.NewServer(http.HandlerFunc(ServeBadRequest))
+	u := &SearchClient{
+		URL:         tsBadRequest.URL,
+		AccessToken: "TOKEN",
+	}
+	_, err := u.FindUsers(SearchRequest{
+		Limit:      10,
+		Offset:     0,
+		Query:      "",
+		OrderField: "",
+		OrderBy:    0,
+	})
+
+	if err == nil {
+		t.Errorf("Expected bad request, got nil")
+	}
+
+	if err != nil && err.Error() != "unknown bad request error: OUCH" {
+		t.Errorf("Expected bad request, got %s", err)
+	}
+}
+
+func testInternalError(t *testing.T) {
+	tsInternalError := httptest.NewServer(http.HandlerFunc(ServeInternalError))
+	u := &SearchClient{
+		URL:         tsInternalError.URL,
+		AccessToken: "TOKEN",
+	}
+	_, err := u.FindUsers(SearchRequest{
+		Limit:      10,
+		Offset:     0,
+		Query:      "",
+		OrderField: "",
+		OrderBy:    0,
+	})
+
+	if err == nil {
+		t.Errorf("Expected error, got nil")
+	}
+}
+
+func testError(t *testing.T) {
+	tsError := httptest.NewServer(http.HandlerFunc(ServeError))
+	u := &SearchClient{
+		URL:         tsError.URL,
+		AccessToken: "TOKEN",
+	}
+	_, err := u.FindUsers(SearchRequest{
+		Limit:      10,
+		Offset:     0,
+		Query:      "",
+		OrderField: "",
+		OrderBy:    0,
+	})
+
+	if err == nil {
+		t.Errorf("Expected error, got nil")
+	}
+}
+
+func testTimeout(t *testing.T) {
+	tsTimeoutError := httptest.NewServer(http.HandlerFunc(ServeTimeout))
+	u := &SearchClient{
+		URL:         tsTimeoutError.URL,
+		AccessToken: "TOKEN",
+	}
+	_, err := u.FindUsers(SearchRequest{
+		Limit:      10,
+		Offset:     0,
+		Query:      "",
+		OrderField: "",
+		OrderBy:    0,
+	})
+
+	if err == nil {
+		t.Errorf("Expected timeout error, got nil")
+	}
+}
+
+func ServeTimeout(w http.ResponseWriter, r *http.Request) {
+	time.Sleep(5 * time.Second)
+	w.WriteHeader(http.StatusOK)
+}
+
+func ServeError(w http.ResponseWriter, r *http.Request) {
+	panic("ERROR")
+}
+
+func ServeInternalError(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusInternalServerError)
+}
+
+func ServeBrokenJson(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusBadRequest)
+	w.Write([]byte("_________brooooooken"))
+}
+
+func ServeBrokenJsonOkResult(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("_________brooooooken"))
+}
+
+func ServeBadRequest(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusBadRequest)
+	resp := SearchErrorResponse{
+		Error: "OUCH",
+	}
+	j, _ := json.Marshal(resp)
+	w.Write(j)
 }
 
 func SearchServer(w http.ResponseWriter, r *http.Request) {
@@ -38,12 +336,25 @@ func SearchServer(w http.ResponseWriter, r *http.Request) {
 	orderField := r.FormValue("order_field")
 	orderBy := r.FormValue("order_by")
 
-	if err := validateParams(orderField); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+	token := r.Header.Get("AccessToken")
+
+	if token == "" {
+		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 
 	rq := parseParams(limit, offset, query, orderField, orderBy)
+
+	if err := validateParams(rq.OrderField, rq.OrderBy); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		errorBody := SearchErrorResponse{
+			Error: err.Error(),
+		}
+		j, _ := json.Marshal(errorBody)
+
+		w.Write(j)
+		return
+	}
 
 	users, err := findUsers(rq)
 
@@ -64,7 +375,6 @@ func SearchServer(w http.ResponseWriter, r *http.Request) {
 
 func findUsers(rq SearchRequest) ([]User, error) {
 	u, err := readUsers("dataset.xml")
-	result := make([]User, rq.Limit)
 
 	if err != nil {
 		return nil, err
@@ -72,17 +382,40 @@ func findUsers(rq SearchRequest) ([]User, error) {
 
 	u = sortUsers(u, rq.OrderField, rq.OrderBy)
 
-	if rq.Offset > len(u)+1 || rq.Limit > len(u) {
-		return u, nil
+	if rq.Offset > len(u)+1 {
+		return make([]User, 0), nil
 	}
 
-	for i := rq.Offset + 1; i < rq.Offset+1+rq.Limit; i++ {
-		if rq.Query != "" && (u[i].Name == rq.Query || u[i].About == rq.Query) {
+	u = filterUsers(u, rq.Query)
+	u = trimUsers(u, rq.Offset, rq.Limit)
+
+	return u, nil
+}
+
+func trimUsers(u []User, offset, limit int) []User {
+	start := offset
+	finish := start + limit
+
+	if finish > len(u) {
+		finish = len(u)
+	}
+
+	result := u[start:finish]
+	return result
+}
+
+func filterUsers(u []User, query string) []User {
+	if query == "" {
+		return u
+	}
+
+	result := make([]User, 0)
+	for i := 0; i < len(u); i++ {
+		if query != "" && (u[i].Name == query || u[i].About == query) {
 			result = append(result, u[i])
 		}
 	}
-
-	return result, nil
+	return result
 }
 
 func sortUsers(u []User, orderFiled string, orderBy int) []User {
@@ -131,23 +464,23 @@ func readUsers(path string) ([]User, error) {
 		return nil, err
 	}
 
-	var xmlUsers []xmlUser
-	err = xml.Unmarshal(byteValue, &xmlUsers)
+	var xmlRoot XmlRoot
+	err = xml.Unmarshal(byteValue, &xmlRoot)
 
 	if err != nil {
 		return nil, err
 	}
 
+	xmlUsers := xmlRoot.Users
+
 	result := make([]User, len(xmlUsers))
 
 	for i := 0; i < len(xmlUsers); i++ {
-		result = append(result, User{
-			Id:     xmlUsers[i].Id,
-			Name:   xmlUsers[i].FirstName + " " + xmlUsers[i].LastName,
-			Age:    xmlUsers[i].Age,
-			About:  xmlUsers[i].About,
-			Gender: xmlUsers[i].Gender,
-		})
+		result[i].Id = xmlUsers[i].Id
+		result[i].Name = xmlUsers[i].FirstName + " " + xmlUsers[i].LastName
+		result[i].Age = xmlUsers[i].Age
+		result[i].About = xmlUsers[i].About
+		result[i].Gender = xmlUsers[i].Gender
 	}
 
 	return result, nil
@@ -168,7 +501,7 @@ func parseParams(limit, offset, query, orderField, orderBy string) SearchRequest
 
 	ord, err := strconv.ParseInt(orderBy, 10, 0)
 
-	if err != nil || o <= 0 {
+	if err != nil {
 		ord = OrderByAsIs
 	}
 
@@ -185,7 +518,7 @@ func parseParams(limit, offset, query, orderField, orderBy string) SearchRequest
 	}
 }
 
-func validateParams(orderField string) error {
+func validateParams(orderField string, orderBy int) error {
 	switch orderField {
 	case "Id":
 		fallthrough
@@ -196,7 +529,18 @@ func validateParams(orderField string) error {
 	case "Age":
 		break
 	default:
-		return fmt.Errorf("order_field must be one of: \"Id\", \"Name\", \"Age\" or empty")
+		return fmt.Errorf("ErrorBadOrderField")
+	}
+
+	switch orderBy {
+	case OrderByAsIs:
+		fallthrough
+	case OrderByAsc:
+		fallthrough
+	case OrderByDesc:
+		break
+	default:
+		return fmt.Errorf(ErrorBadOrderField)
 	}
 
 	return nil
